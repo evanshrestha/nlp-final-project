@@ -40,6 +40,14 @@ $ pip install -r requirements.txt
 
 Finally, `./setup.sh` will download the QA datasets (SQuAD, NewsQA, BioASQ) into `datasests/` and GloVe embeddings into `glove/`. By default, we use the 300-dimensional embeddings (`glove.6B.300d.txt`), but other embeddings are also provided for your convenience. If you don't have wget (e.g., macOS doesn't by default), it will attempt to use curl (which macOS does have). If neither work, you can just manually download the files from the URLs (first argument) and put them in the expected locations.
 
+### SpaCy Configuration
+Run the following to install and configure SpaCy.
+
+```
+conda install -c conda-forge spacy cupy
+python -m spacy download en_core_web_trf
+```
+
 ### File Descriptions
 
 We provide descriptions of the following files:
