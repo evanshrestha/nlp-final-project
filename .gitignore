@@ -1,1 +1,4 @@
 .idea/
+datasets/
+glove/
+__pycache__/
