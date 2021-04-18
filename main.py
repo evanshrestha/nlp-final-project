@@ -56,7 +56,7 @@ parser.add_argument(
     "--model",
     type=str,
     required=True,
-    choices=["baseline"],
+    choices=["baseline", "bert"],
     help="which model to use",
 )
 parser.add_argument(
