@@ -17,8 +17,9 @@ PAD_TOKEN = "[PAD]"
 UNK_TOKEN = "[UNK]"
 
 
-from transformers import DistilBertTokenizerFast, DistilBertModel
+from transformers import DistilBertTokenizerFast
 from tqdm import tqdm
+
 
 class Vocabulary:
     """
@@ -40,10 +41,8 @@ class Vocabulary:
 
     def __init__(self, samples, vocab_size):
         self.words = self._initialize(samples, vocab_size)
-        self.encoding = {word: index for (
-            index, word) in enumerate(self.words)}
-        self.decoding = {index: word for (
-            index, word) in enumerate(self.words)}
+        self.encoding = {word: index for (index, word) in enumerate(self.words)}
+        self.decoding = {index: word for (index, word) in enumerate(self.words)}
 
     def _initialize(self, samples, vocab_size):
         """
@@ -147,7 +146,9 @@ class QADataset(Dataset):
         self.args = args
         self.meta, self.elems = load_dataset(path)
         self.tokenizer = None
-        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
+            "distilbert-base-uncased"
+        )
         self.samples = self._create_samples()
         self.batch_size = args.batch_size if "batch_size" in args else 1
         self.pad_token_id = (
@@ -168,9 +169,16 @@ class QADataset(Dataset):
             # Convert original context to use BERT tokenization
             orig_context = elem["context"]
 
-            tokenized_context = self.bert_tokenizer(orig_context, return_offsets_mapping = True, return_tensors = 'pt')
+            tokenized_context = self.bert_tokenizer(
+                orig_context, return_offsets_mapping=True, return_tensors="pt"
+            )
 
-            elem["context_tokens"] = list(zip(tokenized_context.tokens(), [offset[0] for offset in tokenized_context['offset_mapping']]))
+            elem["context_tokens"] = list(
+                zip(
+                    tokenized_context.tokens(),
+                    [offset[0] for offset in tokenized_context["offset_mapping"]],
+                )
+            )
 
             # Unpack the context paragraph. Shorten to max sequence length.
             passage = [token.lower() for (token, offset) in elem["context_tokens"]][
@@ -184,27 +192,45 @@ class QADataset(Dataset):
 
                 # Convert original question to use BERT tokenization
                 orig_question = qa["question"]
-                
+
                 tokenized_question = self.bert_tokenizer(
-                    orig_question, 
-                    return_offsets_mapping=True, 
-                    return_tensors='pt')
+                    orig_question, return_offsets_mapping=True, return_tensors="pt"
+                )
 
-                qa["question_tokens"] = list(zip(tokenized_question.tokens(), [offset[0] for offset in tokenized_question['offset_mapping']]))
+                qa["question_tokens"] = list(
+                    zip(
+                        tokenized_question.tokens(),
+                        [offset[0] for offset in tokenized_question["offset_mapping"]],
+                    )
+                )
 
-                question = [token.lower() for (token, offset) in qa["question_tokens"] if token != ' '][
-                    : self.args.max_question_length
-                ]
+                question = [
+                    token.lower()
+                    for (token, offset) in qa["question_tokens"]
+                    if token != " "
+                ][: self.args.max_question_length]
 
                 # Select the first answer span, which is formatted as
                 # (start_position, end_position), where the end_position
                 # is inclusive.
                 answers = qa["detected_answers"]
                 answer_start_char, answer_end_char = answers[0]["char_spans"][0]
-                answer_start, answer_end = (tokenized_context.char_to_token(idx) for idx in (answer_start_char, answer_end_char))
+                answer_start, answer_end = (
+                    tokenized_context.char_to_token(idx)
+                    for idx in (answer_start_char, answer_end_char)
+                )
 
                 samples.append(
-                    (qid, passage, question, answer_start, answer_end, orig_context, orig_question))
+                    (
+                        qid,
+                        passage,
+                        question,
+                        answer_start,
+                        answer_end,
+                        orig_context,
+                        orig_question,
+                    )
+                )
 
         return samples
 
@@ -235,7 +261,15 @@ class QADataset(Dataset):
         orig_questions = []
         for idx in example_idxs:
             # Unpack QA sample and tokenize passage/question.
-            qid, passage, question, answer_start, answer_end, orig_context, orig_question = self.samples[idx]
+            (
+                qid,
+                passage,
+                question,
+                answer_start,
+                answer_end,
+                orig_context,
+                orig_question,
+            ) = self.samples[idx]
 
             # Convert words to tensor.
             passage_ids = torch.tensor(self.tokenizer.convert_tokens_to_ids(passage))
@@ -251,7 +285,14 @@ class QADataset(Dataset):
             orig_passages.append(orig_context)
             orig_questions.append(orig_question)
 
-        return zip(passages, questions, start_positions, end_positions, orig_passages, orig_questions)
+        return zip(
+            passages,
+            questions,
+            start_positions,
+            end_positions,
+            orig_passages,
+            orig_questions,
+        )
 
     def _create_batches(self, generator, batch_size):
         """
@@ -313,12 +354,23 @@ class QADataset(Dataset):
                 padded_passages[iii][: len(passage)] = passage
                 padded_questions[iii][: len(question)] = question
 
-
             # Create an input dictionary
             batch_dict = {
                 "passages": cuda(self.args, padded_passages).long(),
-                "passage_input": self.bert_tokenizer(orig_passages, return_tensors='pt', truncation=True, max_length=self.args.max_context_length, padding='longest'),
-                "question_input": self.bert_tokenizer(orig_questions, return_tensors='pt', truncation=True, max_length=self.args.max_question_length, padding='longest'),
+                "passage_input": self.bert_tokenizer(
+                    orig_passages,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.args.max_context_length,
+                    padding="longest",
+                ),
+                "question_input": self.bert_tokenizer(
+                    orig_questions,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=self.args.max_question_length,
+                    padding="longest",
+                ),
                 "questions": cuda(self.args, padded_questions).long(),
                 "start_positions": cuda(self.args, start_positions).long(),
                 "end_positions": cuda(self.args, end_positions).long(),

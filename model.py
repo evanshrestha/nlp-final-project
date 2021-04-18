@@ -6,12 +6,11 @@ Modified by:
     Alvin Deng and Evan Shrestha
 """
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from transformers import DistilBertTokenizerFast, DistilBertModel
+from transformers import DistilBertModel
 
 
 from utils import cuda, load_cached_embeddings
@@ -353,8 +352,10 @@ class BERTEmbedding(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        
-        self.bert = cuda(self.args, DistilBertModel.from_pretrained("distilbert-base-uncased"))
+
+        self.bert = cuda(
+            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
+        )
 
         # Freeze BERT weights
         for param in self.bert.parameters():
@@ -402,7 +403,7 @@ class BERTReader(nn.Module):
         super().__init__()
 
         self.args = args
-        self.device = 'cuda' if args.use_gpu and torch.cuda.is_available() else 'cpu'
+        self.device = "cuda" if args.use_gpu and torch.cuda.is_available() else "cpu"
         self.pad_token_id = args.pad_token_id
 
         # Initialize BERT embedding layer (1)
@@ -484,32 +485,50 @@ class BERTReader(nn.Module):
         batch["question_input"] = batch["question_input"].to(self.device)
 
         # Obtain masks and lengths for passage and question.
-        passage_mask = batch["passage_input"]["attention_mask"] == 1  # [batch_size, p_len]
-        question_mask = batch["question_input"]["attention_mask"] == 1 # [batch_size, q_len]
+        passage_mask = (
+            batch["passage_input"]["attention_mask"] == 1
+        )  # [batch_size, p_len]
+        question_mask = (
+            batch["question_input"]["attention_mask"] == 1
+        )  # [batch_size, q_len]
 
         max_passage_length = batch["passage_input"]["input_ids"].shape[1]
         max_question_length = batch["question_input"]["input_ids"].shape[1]
-        
+
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
         # 1) BERT layer: Pass the passage and extract the BERT output as embedding
-        passage_embeddings = self.bert_embedding(batch["passage_input"]) # [batch_size, p_len, p_dim]
-        question_embeddings = self.bert_embedding(batch["question_input"]) # [batch_size, q_len, q_dim]
+        passage_embeddings = self.bert_embedding(
+            batch["passage_input"]
+        )  # [batch_size, p_len, p_dim]
+        question_embeddings = self.bert_embedding(
+            batch["question_input"]
+        )  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
-        aligned_scores = self.aligned_att(passage_embeddings, question_embeddings, ~question_mask)  # [batch_size, p_len, q_len]
-        aligned_embeddings = aligned_scores.bmm(question_embeddings)  # [batch_size, p_len, q_dim]
-        passage_embeddings = cuda(self.args,torch.cat((passage_embeddings, aligned_embeddings), 2),
+        aligned_scores = self.aligned_att(
+            passage_embeddings, question_embeddings, ~question_mask
+        )  # [batch_size, p_len, q_len]
+        aligned_embeddings = aligned_scores.bmm(
+            question_embeddings
+        )  # [batch_size, p_len, q_dim]
+        passage_embeddings = cuda(
+            self.args,
+            torch.cat((passage_embeddings, aligned_embeddings), 2),
         )  # [batch_size, p_len, p_dim + q_dim]
 
         # 3) Passage Encoder
-        passage_hidden = self.sorted_rnn(passage_embeddings, passage_lengths, self.passage_rnn)  # [batch_size, p_len, p_hid]
+        passage_hidden = self.sorted_rnn(
+            passage_embeddings, passage_lengths, self.passage_rnn
+        )  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
 
         # 4) Question Encoder: Encode question embeddings.
-        question_hidden = self.sorted_rnn(question_embeddings, question_lengths, self.question_rnn)  # [batch_size, q_len, q_hid]
+        question_hidden = self.sorted_rnn(
+            question_embeddings, question_lengths, self.question_rnn
+        )  # [batch_size, q_len, q_hid]
 
         # 5) Question Attentive Sum: Compute weighted sum of question hidden
         #        vectors.

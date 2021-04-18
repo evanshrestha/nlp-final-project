@@ -54,11 +54,6 @@ python -m spacy download en_core_web_trf
 conda install -c huggingface tokenizers=0.10.1 transformers=4.4.2
 ```
 
-#### PyTorch Extensions
-```
-pip install torch-scatter -f https://pytorch-geometric.com/whl/torch-1.8.0+cu101.html
-```
-
 ### File Descriptions
 
 We provide descriptions of the following files:
