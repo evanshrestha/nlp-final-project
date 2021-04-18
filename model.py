@@ -363,9 +363,11 @@ class BERTEmbedding(nn.Module):
         bert_embeddings = []
 
         for text in raw_text:
-            token_tensor = cuda(self.args, self.tokenizer(text, return_tensors="pt"))
+            encoded_text = self.tokenizer(text, return_tensors="pt")
+            tokens = cuda(self.args, encoded_text["input_ids"])
+            attention_mask = cuda(self.args, encoded_text["attention_mask"])
             # (text_length, embedding_size)
-            bert_embedding = self.bert(**token_tensor).last_hidden_state.squeeze(0)
+            bert_embedding = self.bert(input_ids=tokens, attention_mask=attention_mask).last_hidden_state.squeeze(0)
             # Skip the [CLS] and [SEP] token embeddings
             bert_embedding = bert_embedding[1:-1]
             bert_embedding_size = bert_embedding.shape[1]
@@ -379,8 +381,8 @@ class BERTEmbedding(nn.Module):
                 # Subtract 1 for the space following the last character of current word
                 char_end_index = char_start_index + len(word) - 1
 
-                embedding_start_index = token_tensor.char_to_token(char_start_index)
-                embedding_end_index = token_tensor.char_to_token(char_end_index)
+                embedding_start_index = encoded_text.char_to_token(char_start_index)
+                embedding_end_index = encoded_text.char_to_token(char_end_index)
 
                 for index in range(embedding_start_index, embedding_end_index + 1):
                     embedding_scatter_indices.append(
