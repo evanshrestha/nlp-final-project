@@ -171,7 +171,7 @@ parser.add_argument(
 parser.add_argument(
     "--hidden_dim",
     type=int,
-    default=256,
+    default=768,
     help="hidden state dimension",
 )
 parser.add_argument(

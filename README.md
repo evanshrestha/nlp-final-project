@@ -40,19 +40,23 @@ $ pip install -r requirements.txt
 
 Finally, `./setup.sh` will download the QA datasets (SQuAD, NewsQA, BioASQ) into `datasests/` and GloVe embeddings into `glove/`. By default, we use the 300-dimensional embeddings (`glove.6B.300d.txt`), but other embeddings are also provided for your convenience. If you don't have wget (e.g., macOS doesn't by default), it will attempt to use curl (which macOS does have). If neither work, you can just manually download the files from the URLs (first argument) and put them in the expected locations.
 
-### SpaCy Configuration
-Run the following to install and configure SpaCy.
+### Extra Configuration for BERT 
+- Follow the commands to configure each component
 
+#### SpaCy
 ```
 conda install -c conda-forge spacy cupy
 python -m spacy download en_core_web_trf
 ```
 
-### Huggingface Configuration
-Run the following to install Huggingface.
-
+#### Hugging Face
 ```
 conda install -c huggingface tokenizers=0.10.1 transformers=4.4.2
+```
+
+#### PyTorch Extensions
+```
+pip install torch-scatter -f https://pytorch-geometric.com/whl/torch-1.8.0+cu101.html
 ```
 
 ### File Descriptions

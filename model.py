@@ -2,11 +2,15 @@
 
 Author:
     Shrey Desai and Yasumasa Onoe
+Modified by:
+    Alvin Deng and Evan Shrestha
 """
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torch_scatter
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import DistilBertTokenizerFast, DistilBertModel
 
@@ -342,6 +346,70 @@ class BaselineReader(nn.Module):
         return start_logits, end_logits  # [batch_size, p_len], [batch_size, p_len]
 
 
+class BERTEmbedding(nn.Module):
+    """
+    This module calculates the last hidden output from BERT as embedding.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = DistilBertTokenizerFast.from_pretrained(
+            "distilbert-base-uncased"
+        )
+        self.bert = DistilBertModel.from_pretrained("distilbert-base-uncased")
+
+    def forward(self, passages, raw_passages):
+        max_passage_length = passages.shape[1]
+        passage_bert_embeddings = []
+
+        for passage in raw_passages:
+            token_tensor = self.tokenizer(passage, return_tensors="pt")
+            # (passage_length, embedding_size)
+            bert_embedding = self.bert(**token_tensor).last_hidden_state.squeeze(0)
+            # Skip the [CLS] and [SEP] token embeddings
+            bert_embedding = bert_embedding[1:-1]
+            bert_embedding_size = bert_embedding.shape[1]
+
+            # Identify the sub-word embedding and average them to approximate to the word embedding
+            char_start_index = 0
+            embedding_index = 0
+            embedding_scatter_indices = []
+
+            for word in passage.split(" "):
+                # Subtract 1 for the space following the last character of current word
+                char_end_index = char_start_index + len(word) - 1
+
+                embedding_start_index = token_tensor.char_to_token(char_start_index)
+                embedding_end_index = token_tensor.char_to_token(char_end_index)
+
+                for index in range(embedding_start_index, embedding_end_index + 1):
+                    embedding_scatter_indices.append(
+                        [embedding_index] * bert_embedding_size
+                    )
+
+                # Add 2 for the space following the last character of current word
+                # and the first character of next word
+                char_start_index = char_end_index + 2
+                embedding_index += 1
+
+            embedding_indices_tensor = torch.from_numpy(
+                np.array(embedding_scatter_indices)
+            ).long()
+
+            normalized_bert_embedding = torch_scatter.scatter_mean(
+                bert_embedding,
+                embedding_indices_tensor,
+                out=bert_embedding.new_zeros((max_passage_length, bert_embedding_size)),
+                dim=0,
+            ).unsqueeze(0)
+
+            passage_bert_embeddings.append(normalized_bert_embedding)
+
+        passage_bert_embeddings = torch.vstack(passage_bert_embeddings)
+
+        return passage_bert_embeddings
+
+
 class BERTReader(nn.Module):
     """
     BERT QA Model
@@ -382,15 +450,18 @@ class BERTReader(nn.Module):
         self.args = args
         self.pad_token_id = args.pad_token_id
 
-        # Initialize embedding layer (1)
+        # Initialize BERT layer (1)
+        self.bert = BERTEmbedding()
+
+        # Initialize embedding layer (2)
         self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
 
-        # Initialize Context2Query (2)
+        # Initialize Context2Query (3)
         self.aligned_att = AlignedAttention(args.embedding_dim)
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == "lstm" else nn.GRU
 
-        # Initialize passage encoder (3)
+        # Initialize passage encoder (4)
         self.passage_rnn = rnn_cell(
             args.embedding_dim * 2,
             args.hidden_dim,
@@ -398,7 +469,7 @@ class BERTReader(nn.Module):
             batch_first=True,
         )
 
-        # Initialize question encoder (4)
+        # Initialize question encoder (5)
         self.question_rnn = rnn_cell(
             args.embedding_dim,
             args.hidden_dim,
@@ -411,20 +482,14 @@ class BERTReader(nn.Module):
         # Adjust hidden dimension if bidirectional RNNs are used
         _hidden_dim = args.hidden_dim * 2 if args.bidirectional else args.hidden_dim
 
-        # Initialize attention layer for question attentive sum (5)
+        # Initialize attention layer for question attentive sum (6)
         self.question_att = SpanAttention(_hidden_dim)
 
-        # Initialize bilinear layer for start positions (6)
+        # Initialize bilinear layer for start positions (7)
         self.start_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
-        # Initialize bilinear layer for end positions (7)
+        # Initialize bilinear layer for end positions (8)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
-
-        # BERT Tokenizer
-        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
-            "distilbert-base-uncased"
-        )
-        self.bert = DistilBertModel.from_pretrained("distilbert-base-uncased")
 
     def load_pretrained_embeddings(self, vocabulary, path):
         """
@@ -492,20 +557,20 @@ class BERTReader(nn.Module):
         passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
         question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
 
-        print(self.bert_tokenizer(batch["raw_passages"]))
-
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
-        # 1) Embedding Layer: Embed the passage and question.
-        passage_embeddings = self.embedding(
-            batch["passages"]
+        # 1) BERT layer: Pass the passage and extract the BERT output as embedding
+        passage_embeddings = self.bert(
+            batch["passages"], batch["raw_passages"]
         )  # [batch_size, p_len, p_dim]
+
+        # 2) Embedding Layer: Embed question.
         question_embeddings = self.embedding(
             batch["questions"]
         )  # [batch_size, q_len, q_dim]
 
-        # 2) Context2Query: Compute weighted sum of question embeddings for
+        # 3) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
         aligned_scores = self.aligned_att(
             passage_embeddings, question_embeddings, ~question_mask
@@ -518,29 +583,29 @@ class BERTReader(nn.Module):
             torch.cat((passage_embeddings, aligned_embeddings), 2),
         )  # [batch_size, p_len, p_dim + q_dim]
 
-        # 3) Passage Encoder
+        # 4) Passage Encoder
         passage_hidden = self.sorted_rnn(
             passage_embeddings, passage_lengths, self.passage_rnn
         )  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
 
-        # 4) Question Encoder: Encode question embeddings.
+        # 5) Question Encoder: Encode question embeddings.
         question_hidden = self.sorted_rnn(
             question_embeddings, question_lengths, self.question_rnn
         )  # [batch_size, q_len, q_hid]
 
-        # 5) Question Attentive Sum: Compute weighted sum of question hidden
+        # 6) Question Attentive Sum: Compute weighted sum of question hidden
         #        vectors.
         question_scores = self.question_att(question_hidden, ~question_mask)
         question_vector = question_scores.unsqueeze(1).bmm(question_hidden).squeeze(1)
         question_vector = self.dropout(question_vector)  # [batch_size, q_hid]
 
-        # 6) Start Position Pointer: Compute logits for start positions
+        # 7) Start Position Pointer: Compute logits for start positions
         start_logits = self.start_output(
             passage_hidden, question_vector, ~passage_mask
         )  # [batch_size, p_len]
 
-        # 7) End Position Pointer: Compute logits for end positions
+        # 8) End Position Pointer: Compute logits for end positions
         end_logits = self.end_output(
             passage_hidden, question_vector, ~passage_mask
         )  # [batch_size, p_len]
