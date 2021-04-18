@@ -354,7 +354,7 @@ class BERTEmbedding(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
+        self.tokenizer = DistilBertTokenizerFast.from_pretrained(
             "distilbert-base-uncased"
         )
         self.bert = cuda(
