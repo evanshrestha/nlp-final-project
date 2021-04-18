@@ -356,13 +356,14 @@ class BERTEmbedding(nn.Module):
         self.tokenizer = DistilBertTokenizerFast.from_pretrained(
             "distilbert-base-uncased"
         )
-        self.bert = cuda(args, DistilBertModel.from_pretrained("distilbert-base-uncased"))
+        self.args = args
+        self.bert = cuda(self.args, DistilBertModel.from_pretrained("distilbert-base-uncased"))
 
     def forward(self, raw_text, max_text_length: int):
         bert_embeddings = []
 
         for text in raw_text:
-            token_tensor = self.tokenizer(text, return_tensors="pt")
+            token_tensor = cuda(self.args, self.tokenizer(text, return_tensors="pt"))
             # (text_length, embedding_size)
             bert_embedding = self.bert(**token_tensor).last_hidden_state.squeeze(0)
             # Skip the [CLS] and [SEP] token embeddings
