@@ -33,7 +33,7 @@ from tqdm import tqdm
 
 from data import QADataset, Tokenizer, Vocabulary
 
-from model import BaselineReader
+from model import BaselineReader, BERTReader
 from utils import cuda, search_span_endpoints, unpack
 
 
@@ -218,6 +218,8 @@ def _select_model(args):
     """
     if args.model == "baseline":
         return BaselineReader(args)
+    elif args.model == "bert":
+        return BERTReader(args)
     else:
         raise RuntimeError(f"model '{args.model}' not recognized!")
 
