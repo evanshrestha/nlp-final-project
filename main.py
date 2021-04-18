@@ -36,6 +36,7 @@ from data import QADataset, Tokenizer, Vocabulary
 from model import BaselineReader, BERTReader
 from utils import cuda, search_span_endpoints, unpack
 
+from transformers import DistilBertTokenizerFast
 
 _TQDM_BAR_SIZE = 75
 _TQDM_LEAVE = False
@@ -44,6 +45,8 @@ _TQDM_OPTIONS = {"ncols": _TQDM_BAR_SIZE, "leave": _TQDM_LEAVE, "unit": _TQDM_UN
 
 
 parser = argparse.ArgumentParser()
+
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
 # Training arguments.
 parser.add_argument("--device", type=int)
@@ -418,7 +421,7 @@ def write_predictions(args, model, dataset):
             for j in range(start_logits.size(0)):
                 # Find question index and passage.
                 sample_index = args.batch_size * i + j
-                qid, passage, _, _, _ = dataset.samples[sample_index]
+                qid, passage, _, _, _, orig_context, orig_question = dataset.samples[sample_index]
 
                 # Unpack start and end probabilities. Find the constrained
                 # (start, end) pair that has the highest joint probability.
@@ -427,7 +430,8 @@ def write_predictions(args, model, dataset):
                 start_index, end_index = search_span_endpoints(start_probs, end_probs)
 
                 # Grab predicted span.
-                pred_span = " ".join(passage[start_index : (end_index + 1)])
+                tokenized_passage = tokenizer(orig_context)['input_ids']
+                pred_span = tokenizer.decode(tokenized_passage[start_index : (end_index + 1)])
 
                 # Add prediction to outputs.
                 outputs.append({"qid": qid, "answer": pred_span})
