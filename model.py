@@ -381,7 +381,7 @@ class BERTEmbedding(nn.Module):
             embedding_index = 0
             embedding_scatter_indices = []
 
-            for word in text.split(" "):
+            for word in text.split():
                 # Subtract 1 for the space following the last character of current word
                 char_end_index = char_start_index + len(word) - 1
 
