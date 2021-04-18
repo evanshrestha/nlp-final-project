@@ -277,9 +277,17 @@ class QADataset(Dataset):
                 padded_passages[iii][: len(passage)] = passage
                 padded_questions[iii][: len(question)] = question
 
+            # Convert padded passage by token IDs back to raw text for BERT embedding
+            raw_passages = []
+            for index in range(padded_questions.shape[0]):
+                row_passage_indices = padded_passages[index, :].numpy()
+                row_raw_passage = self.tokenizer.convert_ids_to_tokens(row_passage_indices)
+                raw_passages.append(' '.join(row_raw_passage))
+
             # Create an input dictionary
             batch_dict = {
                 "passages": cuda(self.args, padded_passages).long(),
+                "raw_passages": raw_passages,
                 "questions": cuda(self.args, padded_questions).long(),
                 "start_positions": cuda(self.args, start_positions).long(),
                 "end_positions": cuda(self.args, end_positions).long(),

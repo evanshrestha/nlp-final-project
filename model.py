@@ -7,9 +7,11 @@ Author:
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
+from transformers import DistilBertTokenizerFast, DistilBertModel
+
 
 from utils import cuda, load_cached_embeddings
-from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 
 
 def _sort_batch_by_length(tensor, sequence_lengths):
@@ -221,6 +223,10 @@ class BaselineReader(nn.Module):
         # Initialize bilinear layer for end positions (7)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
+        # BERT Tokenizer
+        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+        self.bert = DistilBertModel.from_pretrained('distilbert-base-uncased')
+
     def load_pretrained_embeddings(self, vocabulary, path):
         """
         Loads GloVe vectors and initializes the embedding matrix.
@@ -286,6 +292,9 @@ class BaselineReader(nn.Module):
         # Obtain masks and lengths for passage and question.
         passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
         question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
+
+        print(batch['raw_passages'][0])
+
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 

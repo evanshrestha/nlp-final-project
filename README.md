@@ -48,6 +48,13 @@ conda install -c conda-forge spacy cupy
 python -m spacy download en_core_web_trf
 ```
 
+### Huggingface Configuration
+Run the following to install Huggingface.
+
+```
+conda install -c huggingface tokenizers=0.10.1 transformers=4.4.2
+```
+
 ### File Descriptions
 
 We provide descriptions of the following files:
