@@ -358,13 +358,12 @@ class BERTEmbedding(nn.Module):
         )
         self.bert = DistilBertModel.from_pretrained("distilbert-base-uncased")
 
-    def forward(self, passages, raw_passages):
-        max_passage_length = passages.shape[1]
-        passage_bert_embeddings = []
+    def forward(self, raw_text, max_text_length: int):
+        bert_embeddings = []
 
-        for passage in raw_passages:
-            token_tensor = self.tokenizer(passage, return_tensors="pt")
-            # (passage_length, embedding_size)
+        for text in raw_text:
+            token_tensor = self.tokenizer(text, return_tensors="pt")
+            # (text_length, embedding_size)
             bert_embedding = self.bert(**token_tensor).last_hidden_state.squeeze(0)
             # Skip the [CLS] and [SEP] token embeddings
             bert_embedding = bert_embedding[1:-1]
@@ -375,7 +374,7 @@ class BERTEmbedding(nn.Module):
             embedding_index = 0
             embedding_scatter_indices = []
 
-            for word in passage.split(" "):
+            for word in text.split(" "):
                 # Subtract 1 for the space following the last character of current word
                 char_end_index = char_start_index + len(word) - 1
 
@@ -399,15 +398,15 @@ class BERTEmbedding(nn.Module):
             normalized_bert_embedding = torch_scatter.scatter_mean(
                 bert_embedding,
                 embedding_indices_tensor,
-                out=bert_embedding.new_zeros((max_passage_length, bert_embedding_size)),
+                out=bert_embedding.new_zeros((max_text_length, bert_embedding_size)),
                 dim=0,
             ).unsqueeze(0)
 
-            passage_bert_embeddings.append(normalized_bert_embedding)
+            bert_embeddings.append(normalized_bert_embedding)
 
-        passage_bert_embeddings = torch.vstack(passage_bert_embeddings)
+        bert_embeddings = torch.vstack(bert_embeddings)
 
-        return passage_bert_embeddings
+        return bert_embeddings
 
 
 class BERTReader(nn.Module):
@@ -416,7 +415,7 @@ class BERTReader(nn.Module):
 
     [Architecture]
         0) Inputs: passages and questions
-        1) Embedding Layer: converts words to vectors
+        1) BERT Embedding Layer: converts words to vectors
         2) Context2Query: computes weighted sum of question embeddings for
                each position in passage.
         3) Passage Encoder: LSTM or GRU.
@@ -450,18 +449,15 @@ class BERTReader(nn.Module):
         self.args = args
         self.pad_token_id = args.pad_token_id
 
-        # Initialize BERT layer (1)
+        # Initialize BERT embedding layer (1)
         self.bert = BERTEmbedding()
 
-        # Initialize embedding layer (2)
-        self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
-
-        # Initialize Context2Query (3)
+        # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == "lstm" else nn.GRU
 
-        # Initialize passage encoder (4)
+        # Initialize passage encoder (3)
         self.passage_rnn = rnn_cell(
             args.embedding_dim * 2,
             args.hidden_dim,
@@ -469,7 +465,7 @@ class BERTReader(nn.Module):
             batch_first=True,
         )
 
-        # Initialize question encoder (5)
+        # Initialize question encoder (4)
         self.question_rnn = rnn_cell(
             args.embedding_dim,
             args.hidden_dim,
@@ -482,42 +478,17 @@ class BERTReader(nn.Module):
         # Adjust hidden dimension if bidirectional RNNs are used
         _hidden_dim = args.hidden_dim * 2 if args.bidirectional else args.hidden_dim
 
-        # Initialize attention layer for question attentive sum (6)
+        # Initialize attention layer for question attentive sum (5)
         self.question_att = SpanAttention(_hidden_dim)
 
-        # Initialize bilinear layer for start positions (7)
+        # Initialize bilinear layer for start positions (6)
         self.start_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
-        # Initialize bilinear layer for end positions (8)
+        # Initialize bilinear layer for end positions (7)
         self.end_output = BilinearOutput(_hidden_dim, _hidden_dim)
 
     def load_pretrained_embeddings(self, vocabulary, path):
-        """
-        Loads GloVe vectors and initializes the embedding matrix.
-
-        Args:
-            vocabulary: `Vocabulary` object.
-            path: Embedding path, e.g. "glove/glove.6B.300d.txt".
-        """
-        embedding_map = load_cached_embeddings(path)
-
-        # Create embedding matrix. By default, embeddings are randomly
-        # initialized from Uniform(-0.1, 0.1).
-        embeddings = torch.zeros((len(vocabulary), self.args.embedding_dim)).uniform_(
-            -0.1, 0.1
-        )
-
-        # Initialize pre-trained embeddings.
-        num_pretrained = 0
-        for (i, word) in enumerate(vocabulary.words):
-            if word in embedding_map:
-                embeddings[i] = torch.tensor(embedding_map[word])
-                num_pretrained += 1
-
-        # Place embedding matrix on GPU.
-        self.embedding.weight.data = cuda(self.args, embeddings)
-
-        return num_pretrained
+        return 0
 
     def sorted_rnn(self, sequences, sequence_lengths, rnn):
         """
@@ -557,20 +528,21 @@ class BERTReader(nn.Module):
         passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
         question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
 
+        max_passage_length = batch["passages"].shape[1]
+        max_question_length = batch["questions"].shape[1]
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
         # 1) BERT layer: Pass the passage and extract the BERT output as embedding
-        passage_embeddings = self.bert(
-            batch["passages"], batch["raw_passages"]
+        passage_embeddings = cuda(
+            self.args, self.bert(batch["raw_passages"], max_passage_length)
         )  # [batch_size, p_len, p_dim]
 
-        # 2) Embedding Layer: Embed question.
-        question_embeddings = self.embedding(
-            batch["questions"]
+        question_embeddings = cuda(
+            self.args, self.bert(batch["raw_questions"], max_question_length)
         )  # [batch_size, q_len, q_dim]
 
-        # 3) Context2Query: Compute weighted sum of question embeddings for
+        # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
         aligned_scores = self.aligned_att(
             passage_embeddings, question_embeddings, ~question_mask
@@ -583,29 +555,29 @@ class BERTReader(nn.Module):
             torch.cat((passage_embeddings, aligned_embeddings), 2),
         )  # [batch_size, p_len, p_dim + q_dim]
 
-        # 4) Passage Encoder
+        # 3) Passage Encoder
         passage_hidden = self.sorted_rnn(
             passage_embeddings, passage_lengths, self.passage_rnn
         )  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
 
-        # 5) Question Encoder: Encode question embeddings.
+        # 4) Question Encoder: Encode question embeddings.
         question_hidden = self.sorted_rnn(
             question_embeddings, question_lengths, self.question_rnn
         )  # [batch_size, q_len, q_hid]
 
-        # 6) Question Attentive Sum: Compute weighted sum of question hidden
+        # 5) Question Attentive Sum: Compute weighted sum of question hidden
         #        vectors.
         question_scores = self.question_att(question_hidden, ~question_mask)
         question_vector = question_scores.unsqueeze(1).bmm(question_hidden).squeeze(1)
         question_vector = self.dropout(question_vector)  # [batch_size, q_hid]
 
-        # 7) Start Position Pointer: Compute logits for start positions
+        # 6) Start Position Pointer: Compute logits for start positions
         start_logits = self.start_output(
             passage_hidden, question_vector, ~passage_mask
         )  # [batch_size, p_len]
 
-        # 8) End Position Pointer: Compute logits for end positions
+        # 7) End Position Pointer: Compute logits for end positions
         end_logits = self.end_output(
             passage_hidden, question_vector, ~passage_mask
         )  # [batch_size, p_len]
