@@ -351,15 +351,11 @@ class BERTEmbedding(nn.Module):
     This module calculates the last hidden output from BERT as embedding.
     """
 
-    def __init__(self, args):
+    def __init__(self, args, tokenizer, bert):
         super().__init__()
-        self.tokenizer = DistilBertTokenizerFast.from_pretrained(
-            "distilbert-base-uncased"
-        )
         self.args = args
-        self.bert = cuda(
-            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
-        )
+        self.tokenizer = tokenizer
+        self.bert = bert
 
     def forward(self, raw_text, max_text_length: int):
         bert_embeddings = []
@@ -460,8 +456,19 @@ class BERTReader(nn.Module):
         self.args = args
         self.pad_token_id = args.pad_token_id
 
+        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
+            "distilbert-base-uncased"
+        )
+        self.bert = cuda(
+            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
+        )
+
+        # Freeze BERT weights
+        for param in self.bert.parameters():
+            param.requires_grad = False
+
         # Initialize BERT embedding layer (1)
-        self.bert = BERTEmbedding(self.args)
+        self.bert = BERTEmbedding(self.args, self.bert_tokenizer, self.bert)
 
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
