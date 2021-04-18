@@ -10,7 +10,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch_scatter
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
 from transformers import DistilBertTokenizerFast, DistilBertModel
 
@@ -354,73 +353,15 @@ class BERTEmbedding(nn.Module):
     def __init__(self, args):
         super().__init__()
         self.args = args
-        self.tokenizer = DistilBertTokenizerFast.from_pretrained(
-            "distilbert-base-uncased"
-        )
-        self.bert = cuda(
-            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
-        )
+        
+        self.bert = cuda(self.args, DistilBertModel.from_pretrained("distilbert-base-uncased"))
+
         # Freeze BERT weights
         for param in self.bert.parameters():
             param.requires_grad = False
 
-    def forward(self, raw_text, max_text_length: int):
-        bert_embeddings = []
-
-        for text in raw_text:
-            encoded_text = self.tokenizer(text, return_tensors="pt")
-            tokens = cuda(self.args, encoded_text["input_ids"])
-            attention_mask = cuda(self.args, encoded_text["attention_mask"])
-            # (text_length, embedding_size)
-            bert_embedding = self.bert(
-                input_ids=tokens, attention_mask=attention_mask
-            ).last_hidden_state.squeeze(0)
-            # Skip the [CLS] and [SEP] token embeddings
-            bert_embedding = bert_embedding[1:-1]
-            bert_embedding_size = bert_embedding.shape[1]
-
-            # Identify the sub-word embedding and average them to approximate to the word embedding
-            char_start_index = 0
-            embedding_index = 0
-            embedding_scatter_indices = []
-
-            for word in text.split():
-                # Subtract 1 for the space following the last character of current word
-                char_end_index = char_start_index + len(word) - 1
-
-                embedding_start_index = encoded_text.char_to_token(char_start_index)
-                embedding_end_index = encoded_text.char_to_token(char_end_index)
-
-                for index in range(embedding_start_index, embedding_end_index + 1):
-                    embedding_scatter_indices.append(
-                        [embedding_index] * bert_embedding_size
-                    )
-
-                # Add 2 for the space following the last character of current word
-                # and the first character of next word
-                char_start_index = char_end_index + 2
-                embedding_index += 1
-
-            embedding_indices_tensor = cuda(
-                self.args, torch.from_numpy(np.array(embedding_scatter_indices)).long()
-            )
-            normalized_bert_embedding = cuda(
-                self.args,
-                bert_embedding.new_zeros((max_text_length, bert_embedding_size)),
-            )
-
-            normalized_bert_embedding = torch_scatter.scatter_mean(
-                bert_embedding,
-                embedding_indices_tensor,
-                out=normalized_bert_embedding,
-                dim=0,
-            ).unsqueeze(0)
-
-            bert_embeddings.append(normalized_bert_embedding)
-
-        bert_embeddings = torch.vstack(bert_embeddings)
-
-        return bert_embeddings
+    def forward(self, tokenized_input):
+        return self.bert(**tokenized_input).last_hidden_state
 
 
 class BERTReader(nn.Module):
@@ -461,6 +402,7 @@ class BERTReader(nn.Module):
         super().__init__()
 
         self.args = args
+        self.device = 'cuda' if args.use_gpu and torch.cuda.is_available() else 'cpu'
         self.pad_token_id = args.pad_token_id
 
         # Initialize BERT embedding layer (1)
@@ -538,47 +480,36 @@ class BERTReader(nn.Module):
         return unpacked_sequence_tensor.index_select(0, restoration_indices)
 
     def forward(self, batch):
-        # Obtain masks and lengths for passage and question.
-        passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
-        question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
+        batch["passage_input"] = batch["passage_input"].to(self.device)
+        batch["question_input"] = batch["question_input"].to(self.device)
 
-        max_passage_length = batch["passages"].shape[1]
-        max_question_length = batch["questions"].shape[1]
+        # Obtain masks and lengths for passage and question.
+        passage_mask = batch["passage_input"]["attention_mask"] == 1  # [batch_size, p_len]
+        question_mask = batch["question_input"]["attention_mask"] == 1 # [batch_size, q_len]
+
+        max_passage_length = batch["passage_input"]["input_ids"].shape[1]
+        max_question_length = batch["question_input"]["input_ids"].shape[1]
+        
         passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
         question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
         # 1) BERT layer: Pass the passage and extract the BERT output as embedding
-        passage_embeddings = cuda(
-            self.args, self.bert_embedding(batch["raw_passages"], max_passage_length)
-        )  # [batch_size, p_len, p_dim]
-
-        question_embeddings = cuda(
-            self.args, self.bert_embedding(batch["raw_questions"], max_question_length)
-        )  # [batch_size, q_len, q_dim]
+        passage_embeddings = self.bert_embedding(batch["passage_input"]) # [batch_size, p_len, p_dim]
+        question_embeddings = self.bert_embedding(batch["question_input"]) # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
-        aligned_scores = self.aligned_att(
-            passage_embeddings, question_embeddings, ~question_mask
-        )  # [batch_size, p_len, q_len]
-        aligned_embeddings = aligned_scores.bmm(
-            question_embeddings
-        )  # [batch_size, p_len, q_dim]
-        passage_embeddings = cuda(
-            self.args,
-            torch.cat((passage_embeddings, aligned_embeddings), 2),
+        aligned_scores = self.aligned_att(passage_embeddings, question_embeddings, ~question_mask)  # [batch_size, p_len, q_len]
+        aligned_embeddings = aligned_scores.bmm(question_embeddings)  # [batch_size, p_len, q_dim]
+        passage_embeddings = cuda(self.args,torch.cat((passage_embeddings, aligned_embeddings), 2),
         )  # [batch_size, p_len, p_dim + q_dim]
 
         # 3) Passage Encoder
-        passage_hidden = self.sorted_rnn(
-            passage_embeddings, passage_lengths, self.passage_rnn
-        )  # [batch_size, p_len, p_hid]
+        passage_hidden = self.sorted_rnn(passage_embeddings, passage_lengths, self.passage_rnn)  # [batch_size, p_len, p_hid]
         passage_hidden = self.dropout(passage_hidden)  # [batch_size, p_len, p_hid]
 
         # 4) Question Encoder: Encode question embeddings.
-        question_hidden = self.sorted_rnn(
-            question_embeddings, question_lengths, self.question_rnn
-        )  # [batch_size, q_len, q_hid]
+        question_hidden = self.sorted_rnn(question_embeddings, question_lengths, self.question_rnn)  # [batch_size, q_len, q_hid]
 
         # 5) Question Attentive Sum: Compute weighted sum of question hidden
         #        vectors.
