@@ -167,7 +167,7 @@ class QADataset(Dataset):
             # Additionally, each question has multiple possible answer spans.
             for qa in elem["qas"]:
                 qid = qa["qid"]
-                question = [token.lower() for (token, offset) in qa["question_tokens"]][
+                question = [token.lower() for (token, offset) in qa["question_tokens"] if token != ' '][
                     : self.args.max_question_length
                 ]
 
