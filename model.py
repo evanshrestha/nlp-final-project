@@ -401,11 +401,15 @@ class BERTEmbedding(nn.Module):
             embedding_indices_tensor = cuda(
                 self.args, torch.from_numpy(np.array(embedding_scatter_indices)).long()
             )
+            normalized_bert_embedding = cuda(
+                self.args,
+                bert_embedding.new_zeros((max_text_length, bert_embedding_size)),
+            )
 
             normalized_bert_embedding = torch_scatter.scatter_mean(
                 bert_embedding,
                 embedding_indices_tensor,
-                out=bert_embedding.new_zeros((max_text_length, bert_embedding_size)),
+                out=normalized_bert_embedding,
                 dim=0,
             ).unsqueeze(0)
 
