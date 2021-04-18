@@ -351,11 +351,18 @@ class BERTEmbedding(nn.Module):
     This module calculates the last hidden output from BERT as embedding.
     """
 
-    def __init__(self, args, tokenizer, bert):
+    def __init__(self, args):
         super().__init__()
         self.args = args
-        self.tokenizer = tokenizer
-        self.bert = bert
+        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
+            "distilbert-base-uncased"
+        )
+        self.bert = cuda(
+            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
+        )
+        # Freeze BERT weights
+        for param in self.bert.parameters():
+            param.requires_grad = False
 
     def forward(self, raw_text, max_text_length: int):
         bert_embeddings = []
@@ -456,19 +463,8 @@ class BERTReader(nn.Module):
         self.args = args
         self.pad_token_id = args.pad_token_id
 
-        self.bert_tokenizer = DistilBertTokenizerFast.from_pretrained(
-            "distilbert-base-uncased"
-        )
-        self.bert = cuda(
-            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
-        )
-
-        # Freeze BERT weights
-        for param in self.bert.parameters():
-            param.requires_grad = False
-
         # Initialize BERT embedding layer (1)
-        self.bert = BERTEmbedding(self.args, self.bert_tokenizer, self.bert)
+        self.bert_embedding = BERTEmbedding(self.args)
 
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
@@ -553,11 +549,11 @@ class BERTReader(nn.Module):
 
         # 1) BERT layer: Pass the passage and extract the BERT output as embedding
         passage_embeddings = cuda(
-            self.args, self.bert(batch["raw_passages"], max_passage_length)
+            self.args, self.bert_embedding(batch["raw_passages"], max_passage_length)
         )  # [batch_size, p_len, p_dim]
 
         question_embeddings = cuda(
-            self.args, self.bert(batch["raw_questions"], max_question_length)
+            self.args, self.bert_embedding(batch["raw_questions"], max_question_length)
         )  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
