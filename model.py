@@ -357,7 +357,9 @@ class BERTEmbedding(nn.Module):
             "distilbert-base-uncased"
         )
         self.args = args
-        self.bert = cuda(self.args, DistilBertModel.from_pretrained("distilbert-base-uncased"))
+        self.bert = cuda(
+            self.args, DistilBertModel.from_pretrained("distilbert-base-uncased")
+        )
 
     def forward(self, raw_text, max_text_length: int):
         bert_embeddings = []
@@ -367,7 +369,9 @@ class BERTEmbedding(nn.Module):
             tokens = cuda(self.args, encoded_text["input_ids"])
             attention_mask = cuda(self.args, encoded_text["attention_mask"])
             # (text_length, embedding_size)
-            bert_embedding = self.bert(input_ids=tokens, attention_mask=attention_mask).last_hidden_state.squeeze(0)
+            bert_embedding = self.bert(
+                input_ids=tokens, attention_mask=attention_mask
+            ).last_hidden_state.squeeze(0)
             # Skip the [CLS] and [SEP] token embeddings
             bert_embedding = bert_embedding[1:-1]
             bert_embedding_size = bert_embedding.shape[1]
@@ -394,9 +398,9 @@ class BERTEmbedding(nn.Module):
                 char_start_index = char_end_index + 2
                 embedding_index += 1
 
-            embedding_indices_tensor = torch.from_numpy(
-                np.array(embedding_scatter_indices)
-            ).long()
+            embedding_indices_tensor = cuda(
+                self.args, torch.from_numpy(np.array(embedding_scatter_indices)).long()
+            )
 
             normalized_bert_embedding = torch_scatter.scatter_mean(
                 bert_embedding,
