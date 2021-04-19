@@ -16,7 +16,7 @@ from transformers import DistilBertTokenizerFast
 
 from utils import cuda, load_dataset
 
-WORDNET_AUGMENTATION = naw.SynonymAug(aug_src="wordnet", aug_p=0.25)
+WORDNET_AUGMENTATION = naw.SynonymAug(aug_src='wordnet', aug_p=0.25)
 
 PAD_TOKEN = "[PAD]"
 UNK_TOKEN = "[UNK]"
