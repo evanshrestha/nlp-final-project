@@ -16,7 +16,8 @@ from transformers import DistilBertModel, DistilBertTokenizerFast
 
 from utils import cuda, load_cached_embeddings
 
-tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
+tokenizer = DistilBertTokenizerFast.from_pretrained("distilbert-base-uncased")
+
 
 def _sort_batch_by_length(tensor, sequence_lengths):
     """
@@ -191,7 +192,9 @@ class BaselineReader(nn.Module):
         self.pad_token_id = args.pad_token_id
 
         # Initialize embedding layer (1)
-        emb_vocab_size = tokenizer.vocab_size if args.dataset == 'bert' else args.vocab_size
+        emb_vocab_size = (
+            tokenizer.vocab_size if args.dataset == "bert" else args.vocab_size
+        )
         self.embedding = nn.Embedding(emb_vocab_size, args.embedding_dim)
 
         # Initialize Context2Query (2)
@@ -238,7 +241,7 @@ class BaselineReader(nn.Module):
             path: Embedding path, e.g. "glove/glove.6B.300d.txt".
         """
 
-        if self.args.dataset == 'bert' or self.args.use_random_embeddings:
+        if self.args.dataset == "bert" or self.args.use_random_embeddings:
             return 0
 
         embedding_map = load_cached_embeddings(path)
@@ -296,10 +299,12 @@ class BaselineReader(nn.Module):
 
     def forward(self, batch):
 
-        if self.args.dataset == 'baseline':
+        if self.args.dataset == "baseline":
             # Obtain masks and lengths for passage and question.
             passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
-            question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
+            question_mask = (
+                batch["questions"] != self.pad_token_id
+            )  # [batch_size, q_len]
             passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
             question_lengths = question_mask.long().sum(-1)  # [batch_size]
             passage_ids = batch["passages"]
@@ -323,12 +328,8 @@ class BaselineReader(nn.Module):
             question_ids = batch["question_input"]["input_ids"]
 
         # 1) Embedding Layer: Embed the passage and question.
-        passage_embeddings = self.embedding(
-            passage_ids
-        )  # [batch_size, p_len, p_dim]
-        question_embeddings = self.embedding(
-            question_ids
-        )  # [batch_size, q_len, q_dim]
+        passage_embeddings = self.embedding(passage_ids)  # [batch_size, p_len, p_dim]
+        question_embeddings = self.embedding(question_ids)  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
         #        each passage word and concatenate with passage embeddings.
@@ -437,15 +438,16 @@ class BERTReader(nn.Module):
 
         # Initialize BERT embedding layer (1)
         self.bert_embedding = BERTEmbedding(self.args)
+        self.bert_embedding_size = 768
 
         # Initialize Context2Query (2)
-        self.aligned_att = AlignedAttention(768)
+        self.aligned_att = AlignedAttention(self.bert_embedding_size)
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == "lstm" else nn.GRU
 
         # Initialize passage encoder (3)
         self.passage_rnn = rnn_cell(
-            768 * 2,
+            self.bert_embedding_size * 2,
             args.hidden_dim,
             bidirectional=args.bidirectional,
             batch_first=True,
@@ -453,7 +455,7 @@ class BERTReader(nn.Module):
 
         # Initialize question encoder (4)
         self.question_rnn = rnn_cell(
-            768,
+            self.bert_embedding_size,
             args.hidden_dim,
             bidirectional=args.bidirectional,
             batch_first=True,

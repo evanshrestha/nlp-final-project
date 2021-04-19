@@ -6,19 +6,20 @@ Author:
 
 import collections
 import itertools
-import torch
-
-from torch.utils.data import Dataset
 from random import shuffle
+
+import nlpaug.augmenter.word as naw
+import torch
+from torch.utils.data import Dataset
+from tqdm import tqdm
+from transformers import DistilBertTokenizerFast
+
 from utils import cuda, load_dataset
 
+WORDNET_AUGMENTATION = naw.SynonymAug(aug_src="wordnet", aug_p=0.25)
 
 PAD_TOKEN = "[PAD]"
 UNK_TOKEN = "[UNK]"
-
-
-from transformers import DistilBertTokenizerFast
-from tqdm import tqdm
 
 
 class Vocabulary:
@@ -177,7 +178,10 @@ class QADataset(Dataset):
                 elem["context_tokens"] = list(
                     zip(
                         tokenized_context.tokens(),
-                        [offset[0] for offset in tokenized_context["offset_mapping"][0]],
+                        [
+                            offset[0]
+                            for offset in tokenized_context["offset_mapping"][0]
+                        ],
                     )
                 )
 
@@ -191,52 +195,64 @@ class QADataset(Dataset):
             for qa in elem["qas"]:
                 qid = qa["qid"]
 
-                # Convert original question to use BERT tokenization
-                orig_question = qa["question"]
+                question_variants = [
+                    qa["question"],
+                ]
 
-                if self.args.dataset == "bert":
-                    tokenized_question = self.bert_tokenizer(
-                        orig_question, return_offsets_mapping=True, return_tensors="pt"
+                # Augment the question by substituting with synonyms from WordNet
+                if self.args.question_augmentation:
+                    question_variants.append(
+                        WORDNET_AUGMENTATION.augment(qa["question"])
                     )
 
-                    qa["question_tokens"] = list(
-                        zip(
-                            tokenized_question.tokens(),
-                            [offset[0] for offset in tokenized_question["offset_mapping"][0]],
+                for question_text in question_variants:
+                    # Convert question to use BERT tokenization
+                    if self.args.dataset == "bert":
+                        tokenized_question = self.bert_tokenizer(
+                            question_text, return_offsets_mapping=True, return_tensors="pt"
+                        )
+
+                        qa["question_tokens"] = list(
+                            zip(
+                                tokenized_question.tokens(),
+                                [
+                                    offset[0]
+                                    for offset in tokenized_question["offset_mapping"][0]
+                                ],
+                            )
+                        )
+
+                    question = [
+                        token.lower()
+                        for (token, offset) in qa["question_tokens"]
+                        if token != " "
+                    ][: self.args.max_question_length]
+
+                    # Select the first answer span, which is formatted as
+                    # (start_position, end_position), where the end_position
+                    # is inclusive.
+                    answers = qa["detected_answers"]
+
+                    if self.args.dataset == "bert":
+                        answer_start_char, answer_end_char = answers[0]["char_spans"][0]
+                        answer_start, answer_end = (
+                            tokenized_context.char_to_token(idx)
+                            for idx in (answer_start_char, answer_end_char)
+                        )
+                    else:
+                        answer_start, answer_end = answers[0]["token_spans"][0]
+
+                    samples.append(
+                        (
+                            qid,
+                            passage,
+                            question,
+                            answer_start,
+                            answer_end,
+                            orig_context,
+                            question_text,
                         )
                     )
-
-                question = [
-                    token.lower()
-                    for (token, offset) in qa["question_tokens"]
-                    if token != " "
-                ][: self.args.max_question_length]
-
-                # Select the first answer span, which is formatted as
-                # (start_position, end_position), where the end_position
-                # is inclusive.
-                answers = qa["detected_answers"]
-
-                if self.args.dataset == "bert":
-                    answer_start_char, answer_end_char = answers[0]["char_spans"][0]
-                    answer_start, answer_end = (
-                        tokenized_context.char_to_token(idx)
-                        for idx in (answer_start_char, answer_end_char)
-                    )
-                else:
-                    answer_start, answer_end = answers[0]["token_spans"][0]
-
-                samples.append(
-                    (
-                        qid,
-                        passage,
-                        question,
-                        answer_start,
-                        answer_end,
-                        orig_context,
-                        orig_question,
-                    )
-                )
 
         return samples
 
