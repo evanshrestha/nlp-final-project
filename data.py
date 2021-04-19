@@ -6,7 +6,7 @@ Author:
 
 import collections
 import itertools
-from random import shuffle
+from random import shuffle, random
 
 import nlpaug.augmenter.word as naw
 import torch
@@ -200,7 +200,7 @@ class QADataset(Dataset):
                 ]
 
                 # Augment the question by substituting with synonyms from WordNet
-                if self.args.question_augmentation:
+                if self.args.question_augmentation and self.args.augment_prob > random():
                     question_variants.append(
                         WORDNET_AUGMENTATION.augment(qa["question"])
                     )

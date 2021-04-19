@@ -210,6 +210,12 @@ parser.add_argument(
     action="store_true",
     help="flag to enable WordNet augmentation on question text",
 )
+parser.add_argument(
+    "--augment_prob",
+    type=float,
+    default=0.2,
+    help="augmentation likelihood",
+)
 
 
 def _print_arguments(args):
