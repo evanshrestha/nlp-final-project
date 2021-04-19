@@ -109,6 +109,18 @@ parser.add_argument(
     action="store_true",
     help="shuffle training example at the beginning of each epoch",
 )
+parser.add_argument(
+    "--dataset",
+    type=str,
+    required=True,
+    choices=["baseline", "bert"],
+    help="which dataset to use",
+)
+parser.add_argument(
+    "--use_random_embeddings",
+    action="store_true",
+    help="use random embeddings instead of pretrained ones",
+)
 
 # Optimization arguments.
 parser.add_argument(
@@ -168,7 +180,7 @@ parser.add_argument(
 parser.add_argument(
     "--embedding_dim",
     type=int,
-    default=768,
+    default=300,
     help="embedding dimension",
 )
 parser.add_argument(
@@ -430,8 +442,11 @@ def write_predictions(args, model, dataset):
                 start_index, end_index = search_span_endpoints(start_probs, end_probs)
 
                 # Grab predicted span.
-                tokenized_passage = tokenizer(orig_context)['input_ids']
-                pred_span = tokenizer.decode(tokenized_passage[start_index : (end_index + 1)])
+                if args.dataset == 'bert':
+                    tokenized_passage = tokenizer(orig_context)['input_ids']
+                    pred_span = tokenizer.decode(tokenized_passage[start_index : (end_index + 1)])
+                else:
+                    pred_span = ' '.join(passage[start_index:(end_index + 1)])
 
                 # Add prediction to outputs.
                 outputs.append({"qid": qid, "answer": pred_span})

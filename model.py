@@ -6,15 +6,17 @@ Modified by:
     Alvin Deng and Evan Shrestha
 """
 
+from data import Vocabulary
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.nn.utils.rnn import pack_padded_sequence, pad_packed_sequence
-from transformers import DistilBertModel
+from transformers import DistilBertModel, DistilBertTokenizerFast
 
 
 from utils import cuda, load_cached_embeddings
 
+tokenizer = DistilBertTokenizerFast.from_pretrained('distilbert-base-uncased')
 
 def _sort_batch_by_length(tensor, sequence_lengths):
     """
@@ -185,10 +187,12 @@ class BaselineReader(nn.Module):
         super().__init__()
 
         self.args = args
+        self.device = "cuda" if args.use_gpu and torch.cuda.is_available() else "cpu"
         self.pad_token_id = args.pad_token_id
 
         # Initialize embedding layer (1)
-        self.embedding = nn.Embedding(args.vocab_size, args.embedding_dim)
+        emb_vocab_size = tokenizer.vocab_size if args.dataset == 'bert' else args.vocab_size
+        self.embedding = nn.Embedding(emb_vocab_size, args.embedding_dim)
 
         # Initialize Context2Query (2)
         self.aligned_att = AlignedAttention(args.embedding_dim)
@@ -233,6 +237,10 @@ class BaselineReader(nn.Module):
             vocabulary: `Vocabulary` object.
             path: Embedding path, e.g. "glove/glove.6B.300d.txt".
         """
+
+        if self.args.dataset == 'bert' or self.args.use_random_embeddings:
+            return 0
+
         embedding_map = load_cached_embeddings(path)
 
         # Create embedding matrix. By default, embeddings are randomly
@@ -288,17 +296,31 @@ class BaselineReader(nn.Module):
 
     def forward(self, batch):
         # Obtain masks and lengths for passage and question.
-        passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
-        question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
-        passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
-        question_lengths = question_mask.long().sum(-1)  # [batch_size]
+        # passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
+        # question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
+        # passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
+        # question_lengths = question_mask.long().sum(-1)  # [batch_size]
+
+        batch["passage_input"] = batch["passage_input"].to(self.device)
+        batch["question_input"] = batch["question_input"].to(self.device)
+
+        # Obtain masks and lengths for passage and question.
+        passage_mask = (
+            batch["passage_input"]["attention_mask"] == 1
+        )  # [batch_size, p_len]
+        question_mask = (
+            batch["question_input"]["attention_mask"] == 1
+        )  # [batch_size, q_len]
+
+        passage_lengths = batch["passage_input"]["attention_mask"].sum(dim=1)
+        question_lengths = batch["question_input"]["attention_mask"].sum(dim=1)
 
         # 1) Embedding Layer: Embed the passage and question.
         passage_embeddings = self.embedding(
-            batch["passages"]
+            batch["passage_input"]["input_ids"]
         )  # [batch_size, p_len, p_dim]
         question_embeddings = self.embedding(
-            batch["questions"]
+            batch["question_input"]["input_ids"]
         )  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
@@ -410,13 +432,13 @@ class BERTReader(nn.Module):
         self.bert_embedding = BERTEmbedding(self.args)
 
         # Initialize Context2Query (2)
-        self.aligned_att = AlignedAttention(args.embedding_dim)
+        self.aligned_att = AlignedAttention(768)
 
         rnn_cell = nn.LSTM if args.rnn_cell_type == "lstm" else nn.GRU
 
         # Initialize passage encoder (3)
         self.passage_rnn = rnn_cell(
-            args.embedding_dim * 2,
+            768 * 2,
             args.hidden_dim,
             bidirectional=args.bidirectional,
             batch_first=True,
@@ -424,7 +446,7 @@ class BERTReader(nn.Module):
 
         # Initialize question encoder (4)
         self.question_rnn = rnn_cell(
-            args.embedding_dim,
+            768,
             args.hidden_dim,
             bidirectional=args.bidirectional,
             batch_first=True,

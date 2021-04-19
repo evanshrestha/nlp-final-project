@@ -59,7 +59,7 @@ class Vocabulary:
             (at position 0) and `UNK_TOKEN` (at position 1) are prepended.
         """
         vocab = collections.defaultdict(int)
-        for (_, passage, question, _, _, _, _) in samples:
+        for (_, passage, question, _, _, orig_passage, orig_question) in samples:
             for token in itertools.chain(passage, question):
                 vocab[token.lower()] += 1
         top_words = [
@@ -169,16 +169,17 @@ class QADataset(Dataset):
             # Convert original context to use BERT tokenization
             orig_context = elem["context"]
 
-            tokenized_context = self.bert_tokenizer(
-                orig_context, return_offsets_mapping=True, return_tensors="pt"
-            )
-
-            elem["context_tokens"] = list(
-                zip(
-                    tokenized_context.tokens(),
-                    [offset[0] for offset in tokenized_context["offset_mapping"]],
+            if self.args.dataset == "bert":
+                tokenized_context = self.bert_tokenizer(
+                    orig_context, return_offsets_mapping=True, return_tensors="pt"
                 )
-            )
+
+                elem["context_tokens"] = list(
+                    zip(
+                        tokenized_context.tokens(),
+                        [offset[0] for offset in tokenized_context["offset_mapping"][0]],
+                    )
+                )
 
             # Unpack the context paragraph. Shorten to max sequence length.
             passage = [token.lower() for (token, offset) in elem["context_tokens"]][
@@ -193,16 +194,17 @@ class QADataset(Dataset):
                 # Convert original question to use BERT tokenization
                 orig_question = qa["question"]
 
-                tokenized_question = self.bert_tokenizer(
-                    orig_question, return_offsets_mapping=True, return_tensors="pt"
-                )
-
-                qa["question_tokens"] = list(
-                    zip(
-                        tokenized_question.tokens(),
-                        [offset[0] for offset in tokenized_question["offset_mapping"]],
+                if self.args.dataset == "bert":
+                    tokenized_question = self.bert_tokenizer(
+                        orig_question, return_offsets_mapping=True, return_tensors="pt"
                     )
-                )
+
+                    qa["question_tokens"] = list(
+                        zip(
+                            tokenized_question.tokens(),
+                            [offset[0] for offset in tokenized_question["offset_mapping"][0]],
+                        )
+                    )
 
                 question = [
                     token.lower()
@@ -214,11 +216,15 @@ class QADataset(Dataset):
                 # (start_position, end_position), where the end_position
                 # is inclusive.
                 answers = qa["detected_answers"]
-                answer_start_char, answer_end_char = answers[0]["char_spans"][0]
-                answer_start, answer_end = (
-                    tokenized_context.char_to_token(idx)
-                    for idx in (answer_start_char, answer_end_char)
-                )
+
+                if self.args.dataset == "bert":
+                    answer_start_char, answer_end_char = answers[0]["char_spans"][0]
+                    answer_start, answer_end = (
+                        tokenized_context.char_to_token(idx)
+                        for idx in (answer_start_char, answer_end_char)
+                    )
+                else:
+                    answer_start, answer_end = answers[0]["token_spans"][0]
 
                 samples.append(
                     (
