@@ -295,32 +295,39 @@ class BaselineReader(nn.Module):
         return unpacked_sequence_tensor.index_select(0, restoration_indices)
 
     def forward(self, batch):
-        # Obtain masks and lengths for passage and question.
-        # passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
-        # question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
-        # passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
-        # question_lengths = question_mask.long().sum(-1)  # [batch_size]
 
-        batch["passage_input"] = batch["passage_input"].to(self.device)
-        batch["question_input"] = batch["question_input"].to(self.device)
+        if self.args.dataset == 'baseline':
+            # Obtain masks and lengths for passage and question.
+            passage_mask = batch["passages"] != self.pad_token_id  # [batch_size, p_len]
+            question_mask = batch["questions"] != self.pad_token_id  # [batch_size, q_len]
+            passage_lengths = passage_mask.long().sum(-1)  # [batch_size]
+            question_lengths = question_mask.long().sum(-1)  # [batch_size]
+            passage_ids = batch["passages"]
+            question_ids = batch["questions"]
+        else:
+            batch["passage_input"] = batch["passage_input"].to(self.device)
+            batch["question_input"] = batch["question_input"].to(self.device)
 
-        # Obtain masks and lengths for passage and question.
-        passage_mask = (
-            batch["passage_input"]["attention_mask"] == 1
-        )  # [batch_size, p_len]
-        question_mask = (
-            batch["question_input"]["attention_mask"] == 1
-        )  # [batch_size, q_len]
+            # Obtain masks and lengths for passage and question.
+            passage_mask = (
+                batch["passage_input"]["attention_mask"] == 1
+            )  # [batch_size, p_len]
+            question_mask = (
+                batch["question_input"]["attention_mask"] == 1
+            )  # [batch_size, q_len]
 
-        passage_lengths = batch["passage_input"]["attention_mask"].sum(dim=1)
-        question_lengths = batch["question_input"]["attention_mask"].sum(dim=1)
+            passage_lengths = batch["passage_input"]["attention_mask"].sum(dim=1)
+            question_lengths = batch["question_input"]["attention_mask"].sum(dim=1)
+
+            passage_ids = batch["passage_input"]["input_ids"]
+            question_ids = batch["question_input"]["input_ids"]
 
         # 1) Embedding Layer: Embed the passage and question.
         passage_embeddings = self.embedding(
-            batch["passage_input"]["input_ids"]
+            passage_ids
         )  # [batch_size, p_len, p_dim]
         question_embeddings = self.embedding(
-            batch["question_input"]["input_ids"]
+            question_ids
         )  # [batch_size, q_len, q_dim]
 
         # 2) Context2Query: Compute weighted sum of question embeddings for
