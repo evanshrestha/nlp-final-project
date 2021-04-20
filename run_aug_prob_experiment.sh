@@ -1,6 +1,7 @@
 #!/bin/bash
 
 for RUN in 1 2 3
+  do
   for AUG in 0.1 0.2 0.3 0.4 0.5
   do
     # Random Embedding + GloVe Tokenization + WordNet Augmentation
