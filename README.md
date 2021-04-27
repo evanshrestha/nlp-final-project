@@ -43,12 +43,6 @@ Finally, `./setup.sh` will download the QA datasets (SQuAD, NewsQA, BioASQ) into
 ### Extra Configuration for BERT 
 - Follow the commands to configure each component
 
-#### SpaCy
-```
-conda install -c conda-forge spacy cupy
-python -m spacy download en_core_web_trf
-```
-
 #### Hugging Face
 ```
 conda install -c huggingface tokenizers=0.10.1 transformers=4.4.2
