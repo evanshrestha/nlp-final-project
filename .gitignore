@@ -4,5 +4,6 @@ glove/
 __pycache__/
 *.txt
 *.pt
+*.zip
 .ipynb_checkpoints/
 *.json
