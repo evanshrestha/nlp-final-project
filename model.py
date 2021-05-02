@@ -2,8 +2,6 @@
 
 Author:
     Shrey Desai and Yasumasa Onoe
-Modified by:
-    Alvin Deng and Evan Shrestha
 """
 
 from data import Vocabulary
